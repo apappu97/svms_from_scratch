@@ -77,9 +77,10 @@ class Newton:
             -1*np.eye(curr_a.shape[0])))
         self.C = C
 
-    def newton_step(self, t):
+    def newton_step(self, t, newton_decrement=False):
         """
         Solves the KKT system to find the Newton step
+        Iterates until the newton decrement
         """
         hess = self.objective.hessian(self.curr_a, t)
         grad = self.objective.grad(self.curr_a, t)
@@ -96,7 +97,11 @@ class Newton:
         except np.linalg.LinAlgError:
             solved = scipy.linalg.pinv(KKT_mat) @ rhs
         delta_a = solved[:hess.shape[0]] # grab just delta x part
-        return delta_a
+
+        # we calcualte the newton decrement, -grad^T * delta_a, as a stopping
+        # criterion
+        newton_decrement = -1 * np.dot(grad.T, delta_a)
+        return delta_a, newton_decrement
 
     def line_search(self, delta_x, t):
         """
@@ -126,13 +131,15 @@ class Barrier:
     """
     Implements Barrier method (i.e. outer loop logic)
     """
-    def __init__(self, t_0=1, mu=3, tol=1e-10, max_iter=200):
+    def __init__(self, t_0=1, mu=3, tol=1e-10, newton_tol = 1e-3, max_newton_iter=10, max_iter=200):
         self.t_0 = t_0
         self.mu = mu # expansion constant
         self.tol = tol
+        self.newton_tol = newton_tol
+        self.max_newton_iter = max_newton_iter
         self.max_iter = max_iter
 
-    def run(self, X_train, y_train, kernel_func, C, m):
+    def run(self, X_train, y_train, kernel_func, C, m, store_iterates=False):
         """
         Runs Barrier method
 
@@ -144,31 +151,52 @@ class Barrier:
         m: number of inequality constraints
         """
         a = self._feasible_starting_point(y_train, C)
-        print("Feasible starting point: {}".format(a))
         svm_objective = SVMObjective(X_train, y_train, kernel_func, C)
         t = self.t_0
         curr_iter = 0
+        if store_iterates:
+            iterates = [a]
         while True:
-            newton = Newton(a, svm_objective, C)
-            unscaled_da = newton.newton_step(t)
-            step_length = newton.line_search(unscaled_da, t)
-            a_next = a + step_length * unscaled_da
-            a = a_next
-            # check stopping criteria
-            if m/t < self.tol:
-                break
+            """
+            Includes newton decrement for checking inner loop Newton
+            convergence, *although* it is enough to solve the inner loop
+            imperfectly because we only care about the centering path, not
+            the solutions on the path itself
+            """
+            curr_newton_iter = 0
+            while True:
+                newton = Newton(a, svm_objective, C)
+                unscaled_da, newton_decrement = newton.newton_step(t)
+                step_length = newton.line_search(unscaled_da, t)
+                a_next = a + step_length * unscaled_da
+                a_old = a
+                a = a_next
+                """
+                Check stopping criteria for inner loop Newton.
+                Empirically sometimes the step is incredibly tiny but the
+                Newton decrement is larger than the default tol of 1e-3 -- the
+                np.isclose condition and the max Newton iterations
+                """
+                if newton_decrement < self.newton_tol or np.all(np.isclose(a, a_old)) or curr_newton_iter >= self.max_newton_iter:
+                    break
+                curr_newton_iter +=1
             # increase t
-            t = t * self.mu
+            t_new = t * self.mu
             print("Finished iter: {}".format(curr_iter))
             curr_iter+=1
-        print('Final a: {}'.format(a))
+            if store_iterates:
+                iterates.append(a)
+
+            # check stopping criterion for outer loop barrier
+            if m/t < self.tol:
+                break
+            t = t_new
+        if store_iterates: return a, iterates
         return a
 
     def _feasible_starting_point(self, y_labels, C):
         """
         Find a strictly feasible starting point for the barrier method
-        Thanks to my friend and colleague @Callum Lau for helping me with the
-        feasibilty condition
         """
         total_num = len(y_labels)
         pos = np.sum(y_labels == 1)
@@ -208,15 +236,14 @@ class SVMClassifier:
         self.X_train = X_train
 
     def accuracy(self, X_test, y_test, b = None):
-        # import pdb; pdb.set_trace()
         kernel_mat = self.kernel_func(X_test, self.X_train)
-        print("shape of X_test {} and shape of kernel mat {}, rows should match".format(X_test.shape, kernel_mat.shape))
         if b is None:
             b = self.b
         pred = np.sign(kernel_mat @ self.alpha_y + b)
         pred = np.squeeze(pred)
-        print("pred {}, {}".format(pred.shape, pred))
         num_correct = sum(pred == y_test)
+        print("predictions: {}".format(pred))
+        print("true labels: {}".format(y_test))
         print("num correct {}, accuracy {}".format(num_correct,
             num_correct/len(y_test)))
 

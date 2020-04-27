@@ -40,3 +40,13 @@ def kernel_poly(d=3):
         K = (x1 @ x2.T)**d
         return K
     return _kernel_poly
+
+def kernel_lin():
+    def _kernel_linear(x1, x2):
+        if len(x1.shape) == 1:
+            x1 = x1[None, :]
+        if len(x2.shape) == 1:
+            x2 = x2[None, :]
+        K = x1 @ x2.T
+        return K
+    return _kernel_linear

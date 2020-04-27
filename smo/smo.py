@@ -4,8 +4,7 @@
 This file contains code for training an SVM from scratch using the Sequential
 Minimal Optimization (SMO) algorithm
 
-Pseudocode found at: http://cs229.stanford.edu/materials/smo.pdf was used as
-reference
+Based on pseudocode found at: http://cs229.stanford.edu/materials/smo.pdf
 """
 
 import numpy as np
@@ -53,7 +52,6 @@ class SMO:
         """
         Computes f(x) = \sum_i alpha_iy^iK(x_i, x_test) + b
         """
-        # import pdb; pdb.set_trace()
         kernel_values = self.kernel_func(x_test, self.X_train)
         alpha_y = self._calculate_alphay()
         fx = np.dot(kernel_values, alpha_y) + self.b
@@ -63,7 +61,6 @@ class SMO:
         fx = self.compute_fx(self.X_train[idx, :][None, :])
         y = self.y_train[idx]
         E= fx - y
-        # import pdb; pdb.set_trace()
         E = np.asscalar(E)
         return E
 
@@ -126,12 +123,14 @@ class SMO:
         else:
             return (b1 + b2)/2
 
-    def run(self, max_passes=50):
+    def run(self, max_passes=50, alpha_tol = 1e-5, store_iterates=False):
         passes = 0
+        if store_iterates:
+            iterates = [np.copy(self.alphas)]
+            outer_iterates = [np.copy(self.alphas)]
         while passes < max_passes:
             num_changed_alphas = 0
-            #really simple heuristic, pick do scan over each alpha and pick
-            # alphas randomly
+            #really simple heuristic, scan through each alpha in order and pick alpha to compare randomly
             for i in range(len(self.alphas)):
                 E_i = self.calculate_E(i)
                 if (self.y_train[i]*E_i < -1*self.tol and self.alphas[i] < self.C) or (self.y_train[i] * E_i > self.tol and self.alphas[i] > 0):
@@ -148,15 +147,19 @@ class SMO:
                     if eta >= 0: continue
                     alpha_j = alpha_j_old - self.y_train[j]*(E_i - E_j)/eta
                     alpha_j = self.clip_alpha(alpha_j, L, H)
-                    if np.abs(alpha_j - alpha_j_old) < 1e-5: continue
+                    if np.abs(alpha_j - alpha_j_old) < alpha_tol: continue
                     alpha_i = alpha_i_old + self.y_train[i]*self.y_train[j]*(alpha_j_old - alpha_j)
                     b1 = self.calculate_b1(i, j, alpha_i_old, alpha_i, alpha_j_old, alpha_j)
                     b2 = self.calculate_b2(i, j, alpha_i_old, alpha_i, alpha_j_old, alpha_j)
                     b = self.calculate_final_b(b1, b2, alpha_i, alpha_j)
-
+                    self.b = b
                     self.alphas[i] = alpha_i
                     self.alphas[j] = alpha_j
                     num_changed_alphas +=1
+                    if store_iterates:
+                        iterates.append(np.copy(self.alphas))
+            if store_iterates: outer_iterates.append(np.copy(self.alphas))
             if num_changed_alphas == 0: passes +=1
             else: passes = 0
-        return self.alphas, b
+        if store_iterates: return self.alphas, self.b, iterates, outer_iterates
+        return self.alphas, self.b
